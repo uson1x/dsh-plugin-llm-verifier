@@ -1,0 +1,10 @@
+# Example profile patch layer inserting the LLM-as-a-Verifier plugin.
+# Append the insert row to ~/.dsh/profiles/<profile>/cordis.patch.yml
+# (or run dsh with --patch pointing at this file).
+
+- insert:
+    - id: llm-verifier
+      name: dsh-plugin-llm-verifier
+      config:
+        provider: deepseek-official
+        model: deepseek-v4-pro
