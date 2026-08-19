@@ -62,14 +62,6 @@ No setup needed — the plugin ships its own client bundle (`./client` export) a
 
 Next to Chat and Trajectory, each session gets a **Verifier** tab: a dashboard of every `verify_rollout` run in that session — task, scoreboard, failed attempts with stop reasons, the winning deliverable, and an "open" button on each attempt that jumps into that rollout's own session. Runs still in flight show up as "running".
 
-Don't want the tab? Click **hide this tab** at its bottom — the setting is per-browser (stored in `localStorage`) and survives restarts. To bring it back, run this in the browser console and reload:
-
-```js
-localStorage.removeItem('dsh-llm-verifier:tab')
-```
-
-(dsh currently has no channel for passing plugin config to client bundles, so this is a browser-side setting rather than a `cordis.patch.yml` option. The chat card is unaffected either way.)
-
 ## How grading works
 
 To grade a candidate, the plugin asks the model to rate it on a 1–20 scale (1 = incorrect, 10 = borderline, 20 = flawless). It does this several times, for several separate criteria, and averages everything into one score between 0 and 1:
