@@ -158,6 +158,17 @@ test('track scores each cumulative prefix', async () => {
   assert.ok(result.trend > 0)
 })
 
+test('a fully unparseable sample retries once before counting as lost', async () => {
+  const responses = ['still thinking about it...', '<score>20</score>', '<score>10</score>']
+  const engine = new VerifierEngine(
+    mockCtx(() => responses.shift()),
+    { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, concurrency: 1 },
+  )
+  const result = await engine.score('task', 'candidate')
+  assert.equal(result.rawMean, 20) // first sample recovered on retry
+  assert.equal(responses.length, 1) // exactly one retry consumed
+})
+
 test('unparseable scores fail loudly', async () => {
   const engine = new VerifierEngine(
     mockCtx(() => 'I refuse to grade.'),
