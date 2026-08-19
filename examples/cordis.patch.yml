@@ -8,8 +8,7 @@
       config:
         provider: deepseek-official
         model: deepseek-v4-pro
-        # Grading works well without reasoning; sampling does the statistics.
-        reasoningEffort: 'off'
+        # reasoningEffort: 'off'     # much faster grading, slightly less careful
         # rollout:
-        #   model: deepseek-v4-flash   # cheaper model for rollout children
-        # repetitions: 8               # more grading passes, better discrimination
+        #   model: deepseek-v4-flash # cheaper model for rollout attempts
+        # repetitions: 8             # more grading passes, better discrimination
