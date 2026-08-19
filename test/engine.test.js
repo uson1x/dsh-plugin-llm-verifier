@@ -5,7 +5,9 @@ import {
   normalizeScore,
   parseScoreTags,
   resolveVerifierConfig,
+  sigmoid,
 } from '../lib/engine.js'
+import { apply } from '../lib/index.js'
 
 /** ctx stub whose llm.stream answers each call through `respond(options)`. */
 function mockCtx(respond) {
@@ -22,7 +24,22 @@ function mockCtx(respond) {
   }
 }
 
+/** Pull the two JSON-framed trajectories out of a pairwise prompt. */
+function extractPair(options) {
+  const lines = options.messages[0].content[0].text.split('\n')
+  const after = marker => JSON.parse(lines[lines.indexOf(marker) + 1])
+  return [after('Trajectory A, as a JSON string:'), after('Trajectory B, as a JSON string:')]
+}
+
+/** Pairwise judge that always scores a GOOD-containing trajectory 19 and others 6. */
+function goodJudge(options) {
+  const [a, b] = extractPair(options)
+  const score = text => (text.includes('GOOD') ? 19 : 6)
+  return `<score_A>${score(a)}</score_A> <score_B>${score(b)}</score_B>`
+}
+
 const ROUTE = { provider: 'mock', model: 'mock-1' }
+const ONE_CRITERION = [{ name: 'only', description: 'd' }]
 
 test('parseScoreTags takes the last well-formed in-range tag', () => {
   const text = 'thinking... <score>3</score> wait, revising. <score>17</score>'
@@ -41,11 +58,15 @@ test('normalizeScore maps [1, G] onto [0, 1]', () => {
   assert.equal(normalizeScore(11, 21), 0.5)
 })
 
-test('resolveVerifierConfig applies defaults and rejects bad input', () => {
+test('resolveVerifierConfig applies paper-aligned defaults and rejects bad input', () => {
   const config = resolveVerifierConfig({})
   assert.equal(config.granularity, 20)
-  assert.equal(config.repetitions, 3)
+  assert.equal(config.repetitions, 4)
+  assert.equal(config.tieMargin, 0)
+  assert.equal(config.pivots, 2)
   assert.equal(config.criteria.length, 3)
+  assert.equal(config.rollout.provider, 'spawn')
+  assert.equal(config.rollout.maxConcurrent, 3)
   assert.throws(() => resolveVerifierConfig({ nope: 1 }), /unknown config key/)
   assert.throws(() => resolveVerifierConfig({ provider: 'x' }), /supplied together/)
   assert.throws(() => resolveVerifierConfig({ granularity: 1 }), /at least 2/)
@@ -56,7 +77,7 @@ test('score averages phi over criteria and repetitions', async () => {
   const responses = ['<score>20</score>', '<score>10</score>']
   const engine = new VerifierEngine(
     mockCtx(() => responses.shift()),
-    { ...ROUTE, repetitions: 2, criteria: [{ name: 'only', description: 'd' }], concurrency: 1 },
+    { ...ROUTE, repetitions: 2, criteria: ONE_CRITERION, concurrency: 1 },
   )
   const result = await engine.score('task', 'candidate')
   // phi(20) = 1, phi(10) = 9/19; mean = 14/19
@@ -65,25 +86,43 @@ test('score averages phi over criteria and repetitions', async () => {
   assert.equal(result.perCriterion[0].samples.length, 2)
 })
 
-test('select prefers the candidate the verifier scores higher', async () => {
+test('select runs a pivot tournament and picks the strongest candidate', async () => {
   const engine = new VerifierEngine(
-    mockCtx(options => {
-      const user = options.messages[0].content[0].text
-      return user.includes('GOOD') ? '<score>18</score>' : '<score>5</score>'
-    }),
-    { ...ROUTE, repetitions: 2, criteria: [{ name: 'only', description: 'd' }] },
+    mockCtx(goodJudge),
+    { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, pivots: 2, concurrency: 1 },
   )
-  const result = await engine.select('task', ['a BAD answer', 'a GOOD answer', 'another BAD one'])
+  const candidates = ['a BAD answer', 'another BAD one', 'the GOOD answer', 'a mediocre BAD one']
+  const result = await engine.select('task', candidates)
+  assert.equal(result.bestIndex, 2)
+  for (let i = 0; i < candidates.length; i++) {
+    if (i !== 2) assert.ok(result.rewards[2] > result.rewards[i], `expected winner to beat candidate ${i}`)
+  }
+  assert.equal(result.rewards.length, 4)
+  assert.equal(result.ringScores.length, 4)
+  assert.equal(result.pivots.length, 2)
+  // Ring pass scores N unique pairs; the tournament adds at most k*(N-1) more.
+  assert.ok(result.pairs.length >= 4 && result.pairs.length <= 4 + 2 * 3)
+  // Every reward is a sigma-based win ratio in (0, 1).
+  for (const reward of result.rewards) assert.ok(reward > 0 && reward < 1)
+})
+
+test('select with 2 candidates degenerates to one order-debiased pair', async () => {
+  let calls = 0
+  const engine = new VerifierEngine(
+    mockCtx(options => { calls++; return goodJudge(options) }),
+    { ...ROUTE, repetitions: 2, criteria: ONE_CRITERION, concurrency: 1 },
+  )
+  const result = await engine.select('task', ['BAD', 'GOOD'])
   assert.equal(result.bestIndex, 1)
-  assert.ok(result.bestReward > result.scores[0].reward)
-  assert.equal(result.scores.length, 3)
+  assert.equal(result.pairs.length, 1)
+  assert.equal(calls, 2) // C=1 x K=2 on a single pair
 })
 
 test('compare debiases presentation order', async () => {
-  // Verifier is biased: whatever is presented as Candidate A gets 20, B gets 10.
+  // Verifier is biased: whatever is presented as trajectory A gets 20, B gets 10.
   const engine = new VerifierEngine(
     mockCtx(() => '<score_A>20</score_A> <score_B>10</score_B>'),
-    { ...ROUTE, repetitions: 2, criteria: [{ name: 'only', description: 'd' }], concurrency: 1 },
+    { ...ROUTE, repetitions: 2, criteria: ONE_CRITERION, concurrency: 1 },
   )
   const result = await engine.compare('task', 'left', 'right')
   // With order alternation the position bias cancels exactly.
@@ -93,15 +132,8 @@ test('compare debiases presentation order', async () => {
 
 test('compare reports a real preference through the debias', async () => {
   const engine = new VerifierEngine(
-    mockCtx(options => {
-      const user = options.messages[0].content[0].text
-      // GOOD earns 19 wherever it sits; the other side earns 6.
-      const aIsGood = user.indexOf('GOOD') < user.indexOf('BAD')
-      return aIsGood
-        ? '<score_A>19</score_A> <score_B>6</score_B>'
-        : '<score_A>6</score_A> <score_B>19</score_B>'
-    }),
-    { ...ROUTE, repetitions: 2, criteria: [{ name: 'only', description: 'd' }], concurrency: 1 },
+    mockCtx(goodJudge),
+    { ...ROUTE, repetitions: 2, criteria: ONE_CRITERION, concurrency: 1 },
   )
   const result = await engine.compare('task', 'the GOOD one', 'the BAD one')
   assert.equal(result.preferred, 'A')
@@ -115,7 +147,7 @@ test('track scores each cumulative prefix', async () => {
       const steps = JSON.parse(user.slice(user.indexOf('['), user.lastIndexOf(']') + 1))
       return `<score>${5 * steps.length}</score>`
     }),
-    { ...ROUTE, repetitions: 1, criteria: [{ name: 'only', description: 'd' }] },
+    { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION },
   )
   const result = await engine.track('task', ['s1', 's2', 's3'])
   assert.equal(result.progress.length, 3)
@@ -126,7 +158,7 @@ test('track scores each cumulative prefix', async () => {
 test('unparseable scores fail loudly', async () => {
   const engine = new VerifierEngine(
     mockCtx(() => 'I refuse to grade.'),
-    { ...ROUTE, repetitions: 2, criteria: [{ name: 'only', description: 'd' }] },
+    { ...ROUTE, repetitions: 2, criteria: ONE_CRITERION },
   )
   await assert.rejects(() => engine.score('task', 'candidate'), /no parseable/)
 })
@@ -134,4 +166,99 @@ test('unparseable scores fail loudly', async () => {
 test('missing route fails with a clear message', async () => {
   const engine = new VerifierEngine(mockCtx(() => '<score>10</score>'), {})
   await assert.rejects(() => engine.score('task', 'candidate'), /no verifier model configured/)
+})
+
+test('sigmoid is symmetric around 0.5', () => {
+  assert.equal(sigmoid(0), 0.5)
+  assert.ok(Math.abs(sigmoid(1) + sigmoid(-1) - 1) < 1e-12)
+})
+
+/** Build a full plugin ctx stub: llm judge + subagent providers + tool capture. */
+function pluginCtx(respond, childTexts, spawnLog) {
+  let started = 0
+  const tools = new Map()
+  return {
+    ctx: {
+      ...mockCtx(respond),
+      provide: () => {},
+      tools: { register: def => { tools.set(def.name, def) } },
+      subagents: {
+        getProvider: name => (name === 'spawn' ? {} : undefined),
+        list: () => ['spawn'],
+        start: async (_name, request) => {
+          const index = started++
+          spawnLog.push(request)
+          const spec = childTexts[index]
+          return {
+            id: `sess-${index}`,
+            result: Promise.resolve({
+              output: spec.text === undefined ? [] : [{ type: 'text', text: spec.text }],
+              stopReason: spec.stopReason ?? 'completed',
+            }),
+            dispose: async () => { spec.disposed = (spec.disposed ?? 0) + 1 },
+          }
+        },
+      },
+    },
+    tools,
+  }
+}
+
+test('verify_rollout spawns n children, judges them, and returns the winner', async () => {
+  const children = [
+    { text: 'a BAD webapp' },
+    { text: 'the GOOD webapp' },
+    { text: 'another BAD webapp' },
+  ]
+  const spawnLog = []
+  const { ctx, tools } = pluginCtx(goodJudge, children, spawnLog)
+  apply(ctx, { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, concurrency: 1, rollout: { maxConcurrent: 1 } })
+  const tool = tools.get('verify_rollout')
+  assert.ok(tool, 'verify_rollout registered')
+  const exec = { signal: new AbortController().signal, agent: { fake: true } }
+  const value = await tool.execute({ task: 'build a webapp', n: 3 }, exec)
+  assert.equal(value.best_index, 1)
+  assert.equal(value.winner, 'the GOOD webapp')
+  assert.deepEqual(value.rollout_sessions, ['sess-0', 'sess-1', 'sess-2'])
+  assert.equal(value.rewards.length, 3)
+  for (const child of children) assert.equal(child.disposed, 1, 'every run disposed exactly once')
+  assert.equal(spawnLog.length, 3)
+  assert.deepEqual(spawnLog[0].toolFilter, { deny: ['verify_select', 'verify_compare', 'verify_track', 'verify_rollout'] })
+  assert.match(spawnLog[0].label, /rollout 1\/3/)
+  assert.equal(spawnLog[0].parent, exec.agent)
+  assert.equal(spawnLog[0].agentOptions, undefined)
+})
+
+test('verify_rollout passes a model override and survives one failed child', async () => {
+  const children = [
+    { text: 'a BAD attempt' },
+    { text: undefined, stopReason: 'error' },
+    { text: 'the GOOD attempt' },
+  ]
+  const spawnLog = []
+  const { ctx, tools } = pluginCtx(goodJudge, children, spawnLog)
+  apply(ctx, { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, concurrency: 1, rollout: { maxConcurrent: 1 } })
+  const exec = { signal: new AbortController().signal, agent: {} }
+  const value = await tools.get('verify_rollout').execute(
+    { task: 't', n: 3, rollout_model: 'cheap-model' },
+    exec,
+  )
+  assert.equal(value.best_index, 2)
+  assert.equal(value.rewards[1], null)
+  assert.equal(spawnLog[0].agentOptions.model, 'cheap-model')
+  for (const child of children) assert.equal(child.disposed, 1)
+})
+
+test('verify_rollout fails loudly when too few rollouts succeed', async () => {
+  const children = [
+    { text: 'only survivor' },
+    { text: undefined, stopReason: 'error' },
+  ]
+  const { ctx, tools } = pluginCtx(goodJudge, children, [])
+  apply(ctx, { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, rollout: { maxConcurrent: 1 } })
+  const exec = { signal: new AbortController().signal, agent: {} }
+  await assert.rejects(
+    () => tools.get('verify_rollout').execute({ task: 't', n: 2 }, exec),
+    /at least 2 successful rollouts/,
+  )
 })
