@@ -88,7 +88,7 @@ Restart `dsh web` (the shipped web composition loads the patch layer at boot). T
 | `pivots` | `2` | Pivot count k for the tournament |
 | `tieMargin` | `0` | `compare` margin below which the verdict is `tie` (0 ≈ the paper's no-ties stance) |
 | `promptSection` | `true` | Register the fuzzy-routing system-prompt section |
-| `maxOutputTokens` | `2048` | Output cap per grading call |
+| `maxOutputTokens` | `16384` | Output cap per grading call (reasoning tokens count against it) |
 | `timeoutMs` | `120000` | Deadline per grading call |
 | `concurrency` | `4` | Parallel grading calls |
 | `rollout.provider` | `spawn` | `ctx.subagents` provider for rollout children |
