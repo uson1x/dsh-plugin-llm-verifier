@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-llm-verifier",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "LLM-as-a-Verifier for DeepSeek Harness (dsh): continuous reward signals via select / compare / track, using Monte Carlo repeated grading over decomposed criteria",
   "type": "module",
   "main": "lib/index.js",
