@@ -1,66 +1,18 @@
 # dsh-plugin-llm-verifier
 
-[LLM-as-a-Verifier](https://llm-as-a-verifier.com) ([paper](https://arxiv.org/abs/2607.05391), [reference impl](https://github.com/llm-as-a-verifier/llm-as-a-verifier)) for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`).
+[![test](https://github.com/uson1x/dsh-plugin-llm-verifier/actions/workflows/test.yml/badge.svg)](https://github.com/uson1x/dsh-plugin-llm-verifier/actions/workflows/test.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-An out-of-tree dsh plugin that turns any model behind the harness's `ctx.llm` seam into a verifier producing **continuous reward signals** for candidate solutions — no extra training, no separate reward model. It implements the framework's three APIs (`select` / `compare` / `track`) plus a harness-native fourth: `verify_rollout`, which **generates N independent subagent attempts and judges them** in one tool call.
+**[LLM-as-a-Verifier](https://llm-as-a-verifier.com) for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)**: continuous reward signals for candidate solutions — no extra training, no separate reward model. Includes `verify_rollout`, a generate-then-judge tool that spawns N independent agent attempts and keeps the verifier's winner.
 
-## What it implements
-
-The framework scales verification along three axes, all configurable here:
-
-1. **Score granularity** — fine-grained integer scales (`1..G`, default `G = 20`, anchors: 1 = incorrect, midpoint = borderline, G = flawless).
-2. **Repeated evaluation** — `K` independent grading passes (default 4, the reference implementation's default; the paper reports gains up to K = 16).
-3. **Criteria decomposition** — the rubric is split into simple sub-criteria (default: *specification*, *output*, *errors*, the paper's coding decomposition).
-
-The reward for candidate τ on task x is
-
-```
-R(x, τ) = (1/CK) · Σ_{c,k} φ(v_{c,k}),   φ(v) = (v − 1) / (G − 1) ∈ [0, 1]
-```
-
-Grading calls use the paper's prompt shape — expert-reviewer persona, task and trajectories first, the evaluation criterion at the prompt **tail** (so the C criteria share one provider-cacheable prefix per pair), and scores inside XML tags (`<score>`, or `<score_A>`/`<score_B>` pairwise).
-
-### Best-of-N: Probabilistic Pivot Tournament
-
-`select` implements the paper's PPT, reducing selection from O(N²) to O(Nk) pairwise comparisons:
-
-1. **Ring pass** — a random Hamiltonian cycle scores the N adjacent pairs; every candidate appears exactly once in the A slot and once in B, canceling positional bias structurally.
-2. **Pivot selection** — the top-k candidates by mean ring reward form the pivot set (`pivots`, default k = 2).
-3. **Pivot tournament** — every remaining non-pivot-vs-pivot and pivot-vs-pivot pair is scored (ring results are reused, not re-scored).
-4. **Aggregation** — each scored pair contributes win mass `σ(R_self − R_other)` to both sides; the final score is `w_i / c_i` and the highest wins.
-
-## The four APIs
-
-As tools (what the agent sees):
-
-| Tool | Purpose |
-|---|---|
-| `verify_select(task, candidates[])` | Best-of-N over existing candidates via the pivot tournament |
-| `verify_compare(task, candidate_a, candidate_b)` | Pairwise comparison, order-debiased across repetitions, continuous margin |
-| `verify_track(task, trajectory[])` | Progress reward per cumulative prefix of a rollout, plus the trend |
-| `verify_rollout(task, n?, rollout_model?)` | **Generate-then-judge**: spawn n independent subagent attempts (fresh `spawn` children, parallel, blind to each other), collect each final deliverable verbatim, judge with the pivot tournament, return the winner |
-
-`verify_rollout` is the implicit best-of-N flow, and the plugin registers a short system-prompt section (`tool:verifier`, disable with `promptSection: false`) so loose phrasings route to it without naming the tool: *"use LLM as a verifier to write a landing page"*, *"try this 5 times and keep the best"*, or *"use verify_rollout with n=5 ..."* all run real tool-using agents (n defaults to 3, children default to the session's current model) and hand back the verifier's winner, with each child's session id so the full trajectories stay inspectable in the UI. Rollout children are denied the `verify_*` tools (no recursive fan-out) and can run a cheaper model than the judge via `rollout_model` or the `rollout.model` config.
-
-As a service (what other plugins see), registered at `ctx.verifier`:
-
-```js
-const { bestIndex, rewards, ringScores, pivots } = await ctx.verifier.select(task, candidates)
-const { preferred, margin } = await ctx.verifier.compare(task, a, b)
-const { progress, trend } = await ctx.verifier.track(task, steps)
-const { reward, perCriterion } = await ctx.verifier.score(task, candidate)  // absolute utility, not part of PPT
-```
-
-## Install
-
-Into an existing dsh profile (the Web profile shown; any profile works):
+## Quick start
 
 ```sh
-cd ~/.dsh/profiles/web
+cd ~/.dsh/profiles/web          # or any dsh profile
 npm install github:uson1x/dsh-plugin-llm-verifier
 ```
 
-Then add the insert row to `~/.dsh/profiles/web/cordis.patch.yml`:
+Add to `~/.dsh/profiles/web/cordis.patch.yml` (see [examples/cordis.patch.yml](examples/cordis.patch.yml)):
 
 ```yaml
 - insert:
@@ -69,11 +21,61 @@ Then add the insert row to `~/.dsh/profiles/web/cordis.patch.yml`:
       config:
         provider: deepseek-official
         model: deepseek-v4-pro
-        # rollout:
-        #   model: deepseek-v4-flash   # cheaper model for rollout children
+        reasoningEffort: 'off'   # grading works well without reasoning; sampling does the statistics
 ```
 
-Restart `dsh web` (the shipped web composition loads the patch layer at boot). The plugin's `@deepseek-ai/*` imports resolve through the harness's own profile-level module tree (declared as optional peer dependencies precisely so npm does not fetch duplicate copies).
+Restart `dsh web`, then just talk to your agent:
+
+> use llm as a verifier to write a landing page tagline
+>
+> try this 5 times and keep the best: …
+>
+> here are three drafts — pick the strongest one
+
+A registered system-prompt section routes loose phrasings like these to the right tool; no tool names needed.
+
+## What you get
+
+| Tool | Purpose |
+|---|---|
+| `verify_rollout(task, n?, rollout_model?)` | **Generate-then-judge**: spawn n independent subagent attempts (default 3, parallel, blind to each other), judge their deliverables, return the winner verbatim |
+| `verify_select(task, candidates[])` | Best-of-N over existing candidates via a Probabilistic Pivot Tournament |
+| `verify_compare(task, candidate_a, candidate_b)` | Pairwise comparison with a continuous margin, order-debiased |
+| `verify_track(task, trajectory[])` | Progress reward per cumulative prefix of a rollout |
+
+Every rollout child is a real, inspectable session: open the parent conversation's **subagent catalog** (header tree icon) to watch them run and read each full trajectory. Children default to the session's current model, or run a cheaper one via `rollout_model` / `rollout.model`. They are denied the `verify_*` tools, so no recursive fan-out.
+
+Other plugins get the same power as a Cordis service:
+
+```js
+const { bestIndex, rewards } = await ctx.verifier.select(task, candidates)
+const { preferred, margin } = await ctx.verifier.compare(task, a, b)
+const { progress, trend }  = await ctx.verifier.track(task, steps)
+const { reward }           = await ctx.verifier.score(task, candidate)
+```
+
+## How it works
+
+The verifier ([paper](https://arxiv.org/abs/2607.05391), [reference impl](https://github.com/llm-as-a-verifier/llm-as-a-verifier)) turns any model behind dsh's `ctx.llm` seam into a grader, scaling verification along three axes:
+
+1. **Score granularity** — fine-grained integer scales (`1..G`, default 20; anchors: 1 = incorrect, midpoint = borderline, G = flawless).
+2. **Repeated evaluation** — `K` independent grading passes (default 4).
+3. **Criteria decomposition** — simple sub-criteria (default: *specification*, *output*, *errors*).
+
+The reward for candidate τ on task x:
+
+```
+R(x, τ) = (1/CK) · Σ_{c,k} φ(v_{c,k}),   φ(v) = (v − 1) / (G − 1) ∈ [0, 1]
+```
+
+Grading prompts follow the reference template: expert-reviewer persona, task and trajectories first, the criterion at the prompt **tail** (one provider-cacheable prefix per pair), scores in XML tags.
+
+**Best-of-N** uses the paper's Probabilistic Pivot Tournament — O(Nk) comparisons instead of O(N²):
+
+1. **Ring pass** — a random Hamiltonian cycle scores the N adjacent pairs; every candidate appears once as A and once as B, canceling positional bias structurally.
+2. **Pivot selection** — top-k by mean ring reward (default k = 2).
+3. **Pivot tournament** — every remaining pair against a pivot is scored (ring results reused).
+4. **Aggregation** — win mass `σ(R_self − R_other)` per scored pair; final score `w_i / c_i`, highest wins.
 
 ## Configuration
 
@@ -84,48 +86,51 @@ Restart `dsh web` (the shipped web composition loads the patch layer at boot). T
 | `granularity` | `20` | Integer score scale `1..G` |
 | `repetitions` | `4` | Grading passes per criterion (`K`) |
 | `temperature` | `1` | Sampling temperature for the Monte Carlo estimate |
+| `reasoningEffort` | adapter default | Adapter-owned effort id for grading calls (e.g. `'off'` keeps them fast) |
 | `criteria` | specification / output / errors | Array of `{ name, description }` sub-criteria |
 | `pivots` | `2` | Pivot count k for the tournament |
-| `tieMargin` | `0` | `compare` margin below which the verdict is `tie` (0 ≈ the paper's no-ties stance) |
+| `tieMargin` | `0` | `compare` margin below which the verdict is `tie` |
 | `promptSection` | `true` | Register the fuzzy-routing system-prompt section |
 | `maxOutputTokens` | `16384` | Output cap per grading call (reasoning tokens count against it) |
 | `timeoutMs` | `120000` | Deadline per grading call |
 | `concurrency` | `4` | Parallel grading calls |
 | `rollout.provider` | `spawn` | `ctx.subagents` provider for rollout children |
-| `rollout.model` | — | Model id override for rollout children |
-| `rollout.llmProvider` | — | LLM provider route override for rollout children |
+| `rollout.model` | session model | Model id override for rollout children |
+| `rollout.llmProvider` | session provider | LLM provider route override for rollout children |
 | `rollout.maxConcurrent` | `3` | Rollout children running at once |
 
-Cost: one pairwise comparison costs `C × K` grading calls. `verify_select` scores `N` ring pairs plus at most `k·(N−1)` tournament pairs; `verify_rollout` adds the n child agent runs on top. `verify_track` costs `steps × K` calls.
+**Cost:** one pairwise comparison is `C × K` grading calls. `verify_select` scores `N` ring pairs plus at most `k·(N−1)` tournament pairs; `verify_rollout` adds the n child agent runs on top; `verify_track` costs `steps × K` calls. A fully unparseable sample is retried once.
 
 ## Paper fidelity and deviations
 
-Followed: the R(x, τ) formula, 1–20 granularity with the paper's anchors, repeated evaluation, criteria decomposition, the pairwise `<score_A>`/`<score_B>` template, PPT with ring-pass debiasing and `σ(R_a − R_b)` win mass, criteria-at-tail prompt layout for KV-cache reuse, and prefix-based progress tracking.
+Followed: the R(x, τ) formula, 1–20 granularity with the paper's anchors, repeated evaluation, criteria decomposition, the pairwise `<score_A>`/`<score_B>` template, PPT with ring-pass debiasing and `σ(R_a − R_b)` win mass, criteria-at-tail prompt layout, prefix-based progress tracking.
 
 Deviations, each deliberate:
 
-- **Sampling, not logits.** The reference reads the full distribution of scoring-token logits (`Σ_g p(v_g)·φ(v_g)`, letter-scale tokens). The dsh `StreamChunk` vocabulary exposes no logprobs, so this plugin estimates the same expectation by Monte Carlo sampling at `temperature > 0` — the framework's own repeated-evaluation axis. If the LLM seam grows logprob support, the estimator can switch without changing the API.
+- **Sampling, not logits.** The reference reads the full distribution of scoring-token logits (`Σ_g p(v_g)·φ(v_g)`). The dsh `StreamChunk` vocabulary exposes no logprobs, so the same expectation is estimated by Monte Carlo sampling at `temperature > 0` — the framework's own repeated-evaluation axis. If the LLM seam grows logprob support, the estimator can switch without changing the API.
 - **Ties.** With sampling, an exactly zero margin is possible; `compare` reports it as `tie` (configurable via `tieMargin`). The logit formulation eliminates ties by construction.
 - **Ring pairs are reused in the tournament** rather than re-scored — same estimator, fewer calls.
-- **Progress tracking judges each prefix blind to later steps** (one call per prefix) rather than batching all checkpoints into one call as the reference does; blind prefixes cannot leak information from the future.
+- **Progress tracking judges each prefix blind to later steps** rather than batching all checkpoints into one call; blind prefixes cannot leak information from the future.
+- **`verify_rollout` itself is not in the paper** — it composes the paper's `select` with dsh's subagent seam for the generation half.
 
 ## Development
 
 ```sh
 git clone https://github.com/uson1x/dsh-plugin-llm-verifier
 cd dsh-plugin-llm-verifier
-ln -s ~/.dsh/profiles/node_modules node_modules   # resolve @deepseek-ai/* against your dsh install
+npm install     # pulls the @deepseek-ai/* packages from npm
 npm test
 ```
 
-The tests mock `ctx.llm.stream` with the harness's chunk protocol and `ctx.subagents` with the seam's run contract; no network or credentials needed.
+Tests mock `ctx.llm.stream` with the harness's chunk protocol and `ctx.subagents` with the seam's run contract; no network or credentials needed. (Developing against a live dsh install also works: `ln -s ~/.dsh/profiles/node_modules node_modules` instead of `npm install`.)
 
 ## Known limitations
 
 - **Sampling estimator only** — see above; exact logit expectation awaits logprob support in the dsh LLM seam.
-- **Verifier calls are not session-logged** — grading calls run as auxiliary requests outside the conversation; only the tool result enters the log. Rollout children, by contrast, are real persisted sessions.
-- **Untrusted candidate text is JSON-framed, not sandboxed** — framing prevents structural prompt breakage, but a sufficiently adversarial candidate can still try to argue with the grader.
-- **`verify_rollout` judges final messages only** — the verifier sees each child's final deliverable, not its full tool trace; a child that does great work but summarizes it poorly is judged on the summary.
+- **Verifier calls are not session-logged** — grading runs as auxiliary requests; only the tool result enters the log. Rollout children, by contrast, are real persisted sessions.
+- **Untrusted candidate text is JSON-framed, not sandboxed** — framing prevents structural prompt breakage, but an adversarial candidate can still try to argue with the grader.
+- **`verify_rollout` judges final messages only** — a child that does great work but summarizes it poorly is judged on the summary.
+- DeepSeek Harness is in developer preview; breaking changes there may require plugin updates.
 
 ## License
 

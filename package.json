@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-llm-verifier",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "LLM-as-a-Verifier for DeepSeek Harness (dsh): continuous reward signals via select / compare / track, using Monte Carlo repeated grading over decomposed criteria",
   "type": "module",
   "main": "lib/index.js",
@@ -29,8 +29,30 @@
     "@deepseek-ai/dsh-tools": "*"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/cordis": { "optional": true },
-    "@deepseek-ai/dsh-llm": { "optional": true },
-    "@deepseek-ai/dsh-tools": { "optional": true }
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uson1x/dsh-plugin-llm-verifier.git"
+  },
+  "homepage": "https://github.com/uson1x/dsh-plugin-llm-verifier#readme",
+  "bugs": {
+    "url": "https://github.com/uson1x/dsh-plugin-llm-verifier/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/schemastery": "*"
   }
 }
