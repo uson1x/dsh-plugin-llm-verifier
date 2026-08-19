@@ -180,10 +180,12 @@ test('sigmoid is symmetric around 0.5', () => {
 function pluginCtx(respond, childTexts, spawnLog) {
   let started = 0
   const tools = new Map()
+  const sections = []
   return {
     ctx: {
       ...mockCtx(respond),
       provide: () => {},
+      systemPrompt: { section: section => { sections.push(section) } },
       tools: { register: def => { tools.set(def.name, def) } },
       subagents: {
         getProvider: name => (name === 'spawn' ? {} : undefined),
@@ -204,8 +206,22 @@ function pluginCtx(respond, childTexts, spawnLog) {
       },
     },
     tools,
+    sections,
   }
 }
+
+test('apply registers the fuzzy-routing prompt section unless disabled', () => {
+  const on = pluginCtx(() => '', [], [])
+  apply(on.ctx, { ...ROUTE })
+  assert.equal(on.sections.length, 1)
+  assert.equal(on.sections[0].name, 'tool:verifier')
+  assert.ok(on.sections[0].order >= 100 && on.sections[0].order < 200)
+  assert.match(on.sections[0].text, /verify_rollout/)
+  assert.match(on.sections[0].text, /LLM as a verifier/)
+  const off = pluginCtx(() => '', [], [])
+  apply(off.ctx, { ...ROUTE, promptSection: false })
+  assert.equal(off.sections.length, 0)
+})
 
 test('verify_rollout spawns n children, judges them, and returns the winner', async () => {
   const children = [

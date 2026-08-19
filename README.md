@@ -40,7 +40,7 @@ As tools (what the agent sees):
 | `verify_track(task, trajectory[])` | Progress reward per cumulative prefix of a rollout, plus the trend |
 | `verify_rollout(task, n?, rollout_model?)` | **Generate-then-judge**: spawn n independent subagent attempts (fresh `spawn` children, parallel, blind to each other), collect each final deliverable verbatim, judge with the pivot tournament, return the winner |
 
-`verify_rollout` is the implicit best-of-N flow: *"use verify_rollout with n=5 to build me a landing page"* runs five real tool-using agents and hands back the verifier's winner, with each child's session id so the full trajectories stay inspectable in the UI. Rollout children are denied the `verify_*` tools (no recursive fan-out) and can run a cheaper model than the judge via `rollout_model` or the `rollout.model` config.
+`verify_rollout` is the implicit best-of-N flow, and the plugin registers a short system-prompt section (`tool:verifier`, disable with `promptSection: false`) so loose phrasings route to it without naming the tool: *"use LLM as a verifier to write a landing page"*, *"try this 5 times and keep the best"*, or *"use verify_rollout with n=5 ..."* all run real tool-using agents (n defaults to 3, children default to the session's current model) and hand back the verifier's winner, with each child's session id so the full trajectories stay inspectable in the UI. Rollout children are denied the `verify_*` tools (no recursive fan-out) and can run a cheaper model than the judge via `rollout_model` or the `rollout.model` config.
 
 As a service (what other plugins see), registered at `ctx.verifier`:
 
@@ -87,6 +87,7 @@ Restart `dsh web` (the shipped web composition loads the patch layer at boot). T
 | `criteria` | specification / output / errors | Array of `{ name, description }` sub-criteria |
 | `pivots` | `2` | Pivot count k for the tournament |
 | `tieMargin` | `0` | `compare` margin below which the verdict is `tie` (0 ≈ the paper's no-ties stance) |
+| `promptSection` | `true` | Register the fuzzy-routing system-prompt section |
 | `maxOutputTokens` | `2048` | Output cap per grading call |
 | `timeoutMs` | `120000` | Deadline per grading call |
 | `concurrency` | `4` | Parallel grading calls |
