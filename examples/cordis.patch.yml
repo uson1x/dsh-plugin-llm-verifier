@@ -12,3 +12,5 @@
         # rollout:
         #   model: deepseek-v4-flash # cheaper model for rollout attempts
         # repetitions: 8             # more grading passes, better discrimination
+        # judgeTrace: final          # judge only final messages (cheaper; default: full trajectories)
+        # timeoutMs: 600000          # per-grading-call deadline (default 300000; timed-out calls retry once)

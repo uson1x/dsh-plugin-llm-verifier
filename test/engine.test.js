@@ -64,7 +64,7 @@ test('normalizeScore maps [1, G] onto [0, 1]', () => {
 })
 
 test('resolveVerifierConfig applies paper-aligned defaults and rejects bad input', () => {
-  const config = resolveVerifierConfig({})
+  const config = resolveVerifierConfig(ROUTE)
   assert.equal(config.granularity, 20)
   assert.equal(config.repetitions, 4)
   assert.equal(config.tieMargin, 0)
@@ -72,13 +72,14 @@ test('resolveVerifierConfig applies paper-aligned defaults and rejects bad input
   assert.equal(config.criteria.length, 3)
   assert.equal(config.rollout.provider, 'spawn')
   assert.equal(config.rollout.maxConcurrent, 3)
-  assert.throws(() => resolveVerifierConfig({ nope: 1 }), /unknown config key/)
-  assert.throws(() => resolveVerifierConfig({ provider: 'x' }), /supplied together/)
-  assert.throws(() => resolveVerifierConfig({ granularity: 1 }), /at least 2/)
+  assert.throws(() => resolveVerifierConfig({ ...ROUTE, nope: 1 }), /unknown config key/)
+  assert.throws(() => resolveVerifierConfig({ provider: 'x' }), /must set provider and model/)
+  assert.throws(() => resolveVerifierConfig({}), /must set provider and model/)
+  assert.throws(() => resolveVerifierConfig({ ...ROUTE, granularity: 1 }), /at least 2/)
   // Loader-materialized empty arrays fall back to the default decomposition.
-  assert.equal(resolveVerifierConfig({ criteria: [] }).criteria.length, 3)
-  assert.throws(() => resolveVerifierConfig({ criteria: 'nope' }), /must be an array/)
-  assert.throws(() => resolveVerifierConfig({ criteria: [{ name: 'x' }] }), /name.*description|non-empty string/)
+  assert.equal(resolveVerifierConfig({ ...ROUTE, criteria: [] }).criteria.length, 3)
+  assert.throws(() => resolveVerifierConfig({ ...ROUTE, criteria: 'nope' }), /must be an array/)
+  assert.throws(() => resolveVerifierConfig({ ...ROUTE, criteria: [{ name: 'x' }] }), /name.*description|non-empty string/)
 })
 
 test('score averages phi over criteria and repetitions', async () => {
@@ -205,9 +206,8 @@ test('unparseable scores fail loudly', async () => {
   await assert.rejects(() => engine.score('task', 'candidate'), /no parseable/)
 })
 
-test('missing route fails with a clear message', async () => {
-  const engine = new VerifierEngine(mockCtx(() => '<score>10</score>'), {})
-  await assert.rejects(() => engine.score('task', 'candidate'), /no verifier model configured/)
+test('missing route fails loudly at construction, not first call', () => {
+  assert.throws(() => new VerifierEngine(mockCtx(() => '<score>10</score>'), {}), /must set provider and model/)
 })
 
 test('sigmoid is symmetric around 0.5', () => {
@@ -363,8 +363,8 @@ test('judgeTrace final keeps the judge on final messages only', async () => {
 })
 
 test('judgeTrace validation fails loud', () => {
-  assert.throws(() => resolveVerifierConfig({ judgeTrace: 'sometimes' }), /judgeTrace/)
-  assert.equal(resolveVerifierConfig({}).judgeTrace, 'full')
+  assert.throws(() => resolveVerifierConfig({ ...ROUTE, judgeTrace: 'sometimes' }), /judgeTrace/)
+  assert.equal(resolveVerifierConfig(ROUTE).judgeTrace, 'full')
 })
 
 test('verify_rollout presentationMeta is a pure JSON scoreboard', async () => {
