@@ -70,7 +70,10 @@ test('resolveVerifierConfig applies paper-aligned defaults and rejects bad input
   assert.throws(() => resolveVerifierConfig({ nope: 1 }), /unknown config key/)
   assert.throws(() => resolveVerifierConfig({ provider: 'x' }), /supplied together/)
   assert.throws(() => resolveVerifierConfig({ granularity: 1 }), /at least 2/)
-  assert.throws(() => resolveVerifierConfig({ criteria: [] }), /non-empty array/)
+  // Loader-materialized empty arrays fall back to the default decomposition.
+  assert.equal(resolveVerifierConfig({ criteria: [] }).criteria.length, 3)
+  assert.throws(() => resolveVerifierConfig({ criteria: 'nope' }), /must be an array/)
+  assert.throws(() => resolveVerifierConfig({ criteria: [{ name: 'x' }] }), /name.*description|non-empty string/)
 })
 
 test('score averages phi over criteria and repetitions', async () => {
