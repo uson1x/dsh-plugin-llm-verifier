@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: 1280px; height: 640px; overflow: hidden;
+    background: radial-gradient(1200px 800px at 75% -20%, #1c2b4a 0%, #0d1420 55%, #0a0f18 100%);
+    font-family: -apple-system, "SF Pro Display", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #e8edf5; display: flex; align-items: center; }
+  .wrap { display: flex; align-items: center; gap: 72px; padding: 0 96px; width: 100%; }
+  .left { flex: 1 1 auto; min-width: 0; }
+  h1 { font-size: 54px; font-weight: 700; letter-spacing: -1px; line-height: 1.1; }
+  h1 .dim { color: #7d8aa0; font-weight: 600; }
+  .tag { margin-top: 22px; font-size: 27px; color: #aab6c8; line-height: 1.45; font-weight: 400; }
+  .tag b { color: #e8edf5; font-weight: 600; }
+  .foot { margin-top: 40px; font-size: 21px; color: #66738a; letter-spacing: 0.2px; }
+  .card { flex: 0 0 430px; background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 18px; padding: 30px 32px; box-shadow: 0 24px 70px rgba(0,0,0,0.45); }
+  .card-h { display: flex; align-items: center; gap: 12px; font-size: 23px; font-weight: 650; margin-bottom: 24px; }
+  .card-h .sub { color: #7d8aa0; font-weight: 400; font-size: 19px; }
+  .row { display: flex; align-items: center; gap: 14px; margin: 16px 0; }
+  .lbl { width: 108px; font-size: 20px; color: #c6cfdc; white-space: nowrap; }
+  .lbl.win { color: #fff; font-weight: 650; }
+  .track { flex: 1; height: 12px; border-radius: 6px; background: rgba(255,255,255,0.10); overflow: hidden; }
+  .fill { height: 100%; border-radius: 6px; background: rgba(255,255,255,0.38); }
+  .fill.win { background: linear-gradient(90deg, #4f8ef7, #74a8ff); }
+  .val { width: 64px; text-align: right; font-size: 20px; color: #aab6c8; font-variant-numeric: tabular-nums; }
+  .scale { font-size: 44px; filter: drop-shadow(0 4px 14px rgba(79,142,247,0.35)); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="left">
+      <h1><span class="dim">dsh-plugin-</span>llm-verifier</h1>
+      <div class="tag">LLM-as-a-Verifier for <b>DeepSeek Harness</b> —<br>run N attempts, judge them pairwise, keep the best.</div>
+      <div class="foot">github.com/uson1x/dsh-plugin-llm-verifier</div>
+    </div>
+    <div class="card">
+      <div class="card-h"><span class="scale">⚖</span> best-of-N <span class="sub">· 3 attempts</span></div>
+      <div class="row"><span class="lbl win">rollout 1 ★</span><div class="track"><div class="fill win" style="width:86%"></div></div><span class="val">0.549</span></div>
+      <div class="row"><span class="lbl">rollout 2</span><div class="track"><div class="fill" style="width:71%"></div></div><span class="val">0.538</span></div>
+      <div class="row"><span class="lbl">rollout 3</span><div class="track"><div class="fill" style="width:44%"></div></div><span class="val">0.413</span></div>
+    </div>
+  </div>
+</body>
+</html>
