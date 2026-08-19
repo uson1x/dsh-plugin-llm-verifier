@@ -339,6 +339,24 @@ test('judgeTrace validation fails loud', () => {
   assert.equal(resolveVerifierConfig({}).judgeTrace, 'full')
 })
 
+test('verify_rollout presentationMeta is a pure JSON scoreboard', async () => {
+  const children = [{ text: 'a BAD one' }, { text: 'the GOOD one' }]
+  const { ctx, tools } = pluginCtx(goodJudge, children, [])
+  apply(ctx, { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, concurrency: 1, rollout: { maxConcurrent: 1 } })
+  const exec = { signal: new AbortController().signal, agent: {} }
+  const tool = tools.get('verify_rollout')
+  const value = await tool.execute({ task: 't', n: 2 }, exec)
+  const meta = tool.output.presentationMeta({ task: 't', n: 2 }, value)
+  assert.equal(meta.best_index, 1)
+  assert.equal(meta.rewards.length, 2)
+  assert.equal(meta.sessions.length, 2)
+  assert.equal(meta.judge_trace, 'full')
+  assert.equal(meta.winner_preview, 'the GOOD one')
+  assert.ok(meta.stop_reasons.every(r => typeof r.rollout === 'number'))
+  // Lossless JSON round-trip (the registry persists this on tool/result).
+  assert.deepEqual(JSON.parse(JSON.stringify(meta)), meta)
+})
+
 test('verify_rollout fails loudly when too few rollouts succeed', async () => {
   const children = [
     { text: 'only survivor' },
