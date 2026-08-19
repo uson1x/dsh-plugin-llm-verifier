@@ -52,6 +52,12 @@ Each attempt ("rollout") runs as a separate agent session. Open the parent conve
 
 Other plugins can call the same functions directly via `ctx.verifier` (`select`, `compare`, `track`, `score`).
 
+## Web UI card
+
+In the `dsh web` interface, `verify_rollout` renders as a rich card instead of a plain tool row: a scoreboard with one reward bar per attempt, the winner highlighted, failed attempts with their stop reason, and an expandable preview of the winning deliverable. Each attempt is a real subagent session, so you can open any of them from the session's subagent list to read the full trajectory.
+
+No setup needed — the plugin ships its own client bundle (`./client` export) and dsh's web server picks it up automatically. Headless/CLI use is unaffected.
+
 ## How grading works
 
 To grade a candidate, the plugin asks the model to rate it on a 1–20 scale (1 = incorrect, 10 = borderline, 20 = flawless). It does this several times, for several separate criteria, and averages everything into one score between 0 and 1:
