@@ -211,6 +211,9 @@ function pluginCtx(respond, childTexts, spawnLog) {
               output: spec.text === undefined ? [] : [{ type: 'text', text: spec.text }],
               stopReason: spec.stopReason ?? 'completed',
             }),
+            ...(spec.trace === undefined ? {} : {
+              localAgent: { session: { deriveMessages: () => spec.trace } },
+            }),
             dispose: async () => { spec.disposed = (spec.disposed ?? 0) + 1 },
           }
         },
@@ -277,6 +280,63 @@ test('verify_rollout passes a model override and survives one failed child', asy
   assert.equal(value.rewards[1], null)
   assert.equal(spawnLog[0].agentOptions.model, 'cheap-model')
   for (const child of children) assert.equal(child.disposed, 1)
+})
+
+test('verify_rollout judges the full trajectory by default but returns only the deliverable', async () => {
+  const trace = who => [
+    { role: 'user', content: [{ type: 'text', text: 'the task prompt' }] },
+    { role: 'assistant', content: [
+      { type: 'text', text: `working on it (${who})` },
+      { type: 'tool-call', id: 'c1', name: 'bash', arguments: '{"command":"ls"}' },
+    ] },
+    { role: 'user', content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'file.txt' }] }] },
+    { role: 'assistant', content: [{ type: 'text', text: `done (${who})` }] },
+  ]
+  const children = [
+    { text: 'a BAD result', trace: trace('BAD') },
+    { text: 'the GOOD result', trace: trace('GOOD') },
+  ]
+  const judgePrompts = []
+  const { ctx, tools } = pluginCtx(options => {
+    judgePrompts.push(options.messages[0].content[0].text)
+    return goodJudge(options)
+  }, children, [])
+  apply(ctx, { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, concurrency: 1, rollout: { maxConcurrent: 1 } })
+  const exec = { signal: new AbortController().signal, agent: {} }
+  const value = await tools.get('verify_rollout').execute({ task: 't', n: 2 }, exec)
+  // The judge saw the trajectory: tool calls, results, and the deliverable marker.
+  assert.ok(judgePrompts.length > 0)
+  assert.match(judgePrompts[0], /\[tool call\] bash/)
+  assert.match(judgePrompts[0], /\[tool result\] file\.txt/)
+  assert.match(judgePrompts[0], /Final deliverable:/)
+  // The task prompt itself is not repeated inside the trajectory.
+  assert.ok(!judgePrompts[0].includes('the task prompt'))
+  // The returned winner is the clean deliverable, not the trace.
+  assert.equal(value.best_index, 1)
+  assert.equal(value.winner, 'the GOOD result')
+  assert.equal(value.details.judge_trace, 'full')
+})
+
+test('judgeTrace final keeps the judge on final messages only', async () => {
+  const children = [
+    { text: 'a BAD result', trace: [{ role: 'assistant', content: [{ type: 'tool-call', id: 'c', name: 'bash', arguments: '{}' }] }] },
+    { text: 'the GOOD result', trace: [{ role: 'assistant', content: [{ type: 'tool-call', id: 'c', name: 'bash', arguments: '{}' }] }] },
+  ]
+  const judgePrompts = []
+  const { ctx, tools } = pluginCtx(options => {
+    judgePrompts.push(options.messages[0].content[0].text)
+    return goodJudge(options)
+  }, children, [])
+  apply(ctx, { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, concurrency: 1, judgeTrace: 'final', rollout: { maxConcurrent: 1 } })
+  const exec = { signal: new AbortController().signal, agent: {} }
+  const value = await tools.get('verify_rollout').execute({ task: 't', n: 2 }, exec)
+  assert.equal(value.best_index, 1)
+  assert.ok(judgePrompts.every(prompt => !prompt.includes('[tool call]')))
+})
+
+test('judgeTrace validation fails loud', () => {
+  assert.throws(() => resolveVerifierConfig({ judgeTrace: 'sometimes' }), /judgeTrace/)
+  assert.equal(resolveVerifierConfig({}).judgeTrace, 'full')
 })
 
 test('verify_rollout fails loudly when too few rollouts succeed', async () => {
