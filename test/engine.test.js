@@ -353,6 +353,13 @@ test('verify_rollout presentationMeta is a pure JSON scoreboard', async () => {
   assert.equal(meta.judge_trace, 'full')
   assert.equal(meta.winner_preview, 'the GOOD one')
   assert.ok(meta.stop_reasons.every(r => typeof r.rollout === 'number'))
+  assert.equal(meta.attempts.length, 2)
+  assert.equal(meta.attempts[1].preview, 'the GOOD one')
+  assert.ok(meta.attempts.every(a => typeof a.rollout === 'number' && typeof a.ok === 'boolean'))
+  assert.equal(meta.judge.granularity, 20)
+  assert.deepEqual(meta.judge.criteria, ['only'])
+  assert.ok(Array.isArray(meta.judge.pairs) && meta.judge.pairs.length >= 1)
+  assert.ok(meta.judge.pairs.every(pair => typeof pair.a === 'number' && typeof pair.reward_a === 'number'))
   // Lossless JSON round-trip (the registry persists this on tool/result).
   assert.deepEqual(JSON.parse(JSON.stringify(meta)), meta)
 })

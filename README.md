@@ -60,7 +60,7 @@ No setup needed — the plugin ships its own client bundle (`./client` export) a
 
 ### The Verifier tab
 
-Next to Chat and Trajectory, each session gets a **Verifier** tab: a dashboard of every `verify_rollout` run in that session — task, scoreboard, failed attempts with stop reasons, the winning deliverable, and an "open" button on each attempt that jumps into that rollout's own session. Runs still in flight show up as "running".
+Next to Chat and Trajectory, each session gets a **Verifier** tab — the deep-dive view of every `verify_rollout` run in that session. Per attempt: reward bar, wall-clock time, tool-call and turn counts, how much trajectory the judge read, the attempt's own deliverable (not just the winner's), and an "open" button that jumps into that rollout's session. A "how the judge decided" panel shows the criteria and repetition config plus every pairwise comparison the tournament ran. Runs still in flight show up as "running".
 
 ## How grading works
 
