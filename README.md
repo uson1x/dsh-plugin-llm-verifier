@@ -100,7 +100,7 @@ Everything has a sensible default. You only must set `provider` and `model`.
 | `judgeTrace` | `full` | What the rollout judge sees per attempt: the full trajectory (`full`) or only the final message (`final`) |
 | `traceMaxChars` | `24000` | Character budget per trajectory shown to the judge |
 | `maxOutputTokens` | `16384` | Token budget per grading call |
-| `timeoutMs` | `120000` | Time budget per grading call |
+| `timeoutMs` | `300000` | Time budget per grading call; a call our own timeout kills is retried once |
 | `concurrency` | `4` | Parallel grading calls |
 | `rollout.model` | session model | Run attempts on a different (e.g. cheaper) model |
 | `rollout.llmProvider` | session provider | Provider for that model |

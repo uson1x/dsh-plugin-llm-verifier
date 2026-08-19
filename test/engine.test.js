@@ -14,7 +14,12 @@ function mockCtx(respond) {
   return {
     llm: {
       async* stream(options) {
-        const text = await respond(options)
+        const answer = await respond(options)
+        if (answer !== null && typeof answer === 'object' && answer.abort) {
+          yield { type: 'finish', reason: { kind: 'aborted', failure: { message: 'request aborted by caller', code: 'ABORTED' } } }
+          return
+        }
+        const text = answer
         yield { type: 'block-start', index: 0, blockType: 'text' }
         yield { type: 'text-delta', index: 0, text }
         yield { type: 'block-end', index: 0, block: { type: 'text', text } }
@@ -156,6 +161,29 @@ test('track scores each cumulative prefix', async () => {
   assert.equal(result.progress.length, 3)
   assert.ok(result.progress[2].reward > result.progress[0].reward)
   assert.ok(result.trend > 0)
+})
+
+test('an aborted judge call is retried once when the caller did not abort', async () => {
+  let calls = 0
+  const engine = new VerifierEngine(mockCtx(() => {
+    calls++
+    return calls === 1 ? { abort: true } : '<score>15</score>'
+  }), { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, concurrency: 1 })
+  const result = await engine.score('t', 'x')
+  assert.equal(calls, 2)
+  assert.equal(result.rawMean, 15)
+})
+
+test('an abort from the caller signal is not retried', async () => {
+  let calls = 0
+  const controller = new AbortController()
+  controller.abort()
+  const engine = new VerifierEngine(mockCtx(() => {
+    calls++
+    return { abort: true }
+  }), { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, concurrency: 1 })
+  await assert.rejects(() => engine.score('t', 'x', { signal: controller.signal }), /aborted/)
+  assert.equal(calls, 1)
 })
 
 test('a fully unparseable sample retries once before counting as lost', async () => {
