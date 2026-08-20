@@ -74,11 +74,12 @@ Next to Chat and Trajectory, each session gets a **Verifier** tab — the deep-d
 
 ## How grading works
 
-To grade a candidate, the plugin asks the model to rate it on a 1–20 scale (1 = incorrect, the midpoint 11 = borderline, 20 = flawless). It does this several times, for several separate criteria, and averages everything into one score between 0 and 1:
+To grade a candidate, the plugin asks the model to rate it on the reference implementation's banded 20-point scale (20 = clearly succeeded with verified output, 11–13 = uncertain leaning success, 1 = clearly failed, and so on). Every judge prompt also carries a ground-truth note reminding the model that no reference solution exists. It does this several times, for several separate criteria, and averages everything into one score between 0 and 1:
 
 - **1–20 instead of 1–5** — a finer scale separates close candidates better.
 - **Several repetitions** (default 4) — averaging repeated grades reduces noise.
-- **Several criteria** (default 3: follows the spec / output is correct / no errors) — small focused questions beat one big vague one.
+- **Several criteria** — small focused questions beat one big vague one. Text candidates (`verify_select` / `verify_compare`) default to the paper's 3 coding criteria (follows the spec / output is correct / no errors); full rollout trajectories default to the reference implementation's single **Task Success** criterion, which explicitly tells the judge that trajectory length and confidence do not predict correctness.
+- **Majority voting** — when a strict majority of candidates are byte-identical, the tournament is skipped and the majority answer wins outright.
 
 To pick the best of N candidates, it runs a small tournament instead of grading each in isolation:
 
@@ -89,7 +90,7 @@ To pick the best of N candidates, it runs a small tournament instead of grading 
 
 This is the paper's "Probabilistic Pivot Tournament". It needs at most `3(N−1)` pair gradings — fewer in practice, because ring pairs are reused in the tournament — instead of all `N(N−1)/2` pairs.
 
-**Cost:** one pair grading = criteria × repetitions model calls (12 by default), and a default `verify_rollout` with n=3 grades 3 pairs — 36 grading calls — on top of running the 3 attempts themselves. A grading call that times out or returns no parseable score is retried once, so slow runs can spend more. Expect a `verify_rollout` call to take minutes, not seconds.
+**Cost:** one pair grading = criteria × repetitions model calls (3 × 4 = 12 for text candidates; 1 × 4 = 4 for rollout trajectories). A default `verify_rollout` with n=3 grades 3 pairs — 12 grading calls — on top of running the 3 attempts themselves. A grading call that times out or returns no parseable score is retried once, so slow runs can spend more. Expect a `verify_rollout` call to take minutes, not seconds.
 
 ## Configuration
 
@@ -101,7 +102,10 @@ Everything has a sensible default except `provider` and `model`, which you must 
 | `model` | — (required) | Model id on that route |
 | `granularity` | `20` | Score scale (1..G) |
 | `repetitions` | `4` | How many times each grade is repeated |
-| `criteria` | spec / output / errors | List of `{ name, description }` grading criteria |
+| `criteria` | spec / output / errors | List of `{ name, description }` criteria for text candidates |
+| `groundTruthNote` | "no reference solution…" | Note every judge prompt carries; `false` disables |
+| `majorityVoting` | `true` | Skip the tournament when a strict majority of candidates are identical |
+| `seed` | unset | Seed the random ring pass for reproducible tournaments |
 | `temperature` | `1` | Sampling temperature for grading calls |
 | `reasoningEffort` | adapter default | Reasoning effort for grading calls (`'off'` makes grading much faster, slightly less careful) |
 | `pivots` | `2` | Tournament pivot count |
@@ -116,14 +120,16 @@ Everything has a sensible default except `provider` and `model`, which you must 
 | `rollout.llmProvider` | unset | Provider for that model; unset inherits from the parent session |
 | `rollout.maxConcurrent` | `3` | Attempts running at once |
 | `rollout.provider` | `spawn` | Which subagent backend runs attempts |
+| `rollout.criteria` | Task Success | Criteria for judging full rollout trajectories |
 
 ## Differences from the paper
 
-The paper reads the model's token probabilities ("logprobs") to compute an exact expected score in one call. DeepSeek Harness does not expose logprobs, so this plugin samples instead: it asks several times at temperature 1 and averages. Same quantity, estimated more noisily. (The paper does the same kind of workaround for models that hide logprobs.)
+The reference implementation reads the model's token probabilities ("logprobs") at the score position to compute an exact expected score in one call — which is also why it scores with single letters A–T (one token each) instead of numbers. DeepSeek Harness does not expose logprobs to plugins, so this plugin samples instead: it asks several times at temperature 1 and averages, and keeps integer score tags since they no longer need to be single tokens. Same quantity, estimated more noisily.
 
 Other differences:
 
 - `compare` can return a tie on an exactly zero margin; the paper's formulation cannot tie.
+- The reference scores directed pairs separately (each direction fresh); this plugin scores each unordered pair once and cancels slot bias by swapping presentation order across repetitions instead.
 - Progress tracking grades each step prefix without seeing later steps (one prompt per step, graded `repetitions` times — 4 calls per step by default). The paper batches all steps into one call.
 
 ## Good to know

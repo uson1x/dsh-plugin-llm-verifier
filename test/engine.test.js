@@ -164,6 +164,54 @@ test('track scores each cumulative prefix', async () => {
   assert.ok(result.trend > 0)
 })
 
+test('majority voting skips the tournament for identical candidates', async () => {
+  let calls = 0
+  const engine = new VerifierEngine(mockCtx(() => { calls++; return '<score_A>10</score_A><score_B>10</score_B>' }),
+    { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION })
+  const result = await engine.select('t', ['same', 'same', 'other'])
+  assert.equal(calls, 0)
+  assert.equal(result.majority, 2)
+  assert.equal(result.rewards[result.bestIndex], 1)
+  assert.equal(engine.config.majorityVoting, true)
+})
+
+test('majorityVoting false always runs the tournament', async () => {
+  let calls = 0
+  const engine = new VerifierEngine(mockCtx(() => '<score_A>12</score_A><score_B>8</score_B>'),
+    { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, concurrency: 1, majorityVoting: false })
+  const result = await engine.select('t', ['same', 'same'])
+  assert.ok(calls === 0) // sanity: counter unused; tournament ran without throwing
+  assert.ok(result.pairs.length >= 1)
+})
+
+test('seeded ring pass is deterministic', async () => {
+  const run = async () => {
+    const order = []
+    const engine = new VerifierEngine(mockCtx(options => {
+      order.push(options.messages[0].content[0].text.length)
+      return '<score_A>12</score_A><score_B>9</score_B>'
+    }), { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, concurrency: 1, seed: 7, majorityVoting: false })
+    await engine.select('t', ['aa', 'bbbb', 'cccccc', 'dddddddd'])
+    return order.join(',')
+  }
+  assert.equal(await run(), await run())
+})
+
+test('judge prompts carry the ground-truth note and rollout runs Task Success', async () => {
+  const prompts = []
+  const respond = options => {
+    prompts.push(options.messages[0].content[0].text)
+    return goodJudge(options)
+  }
+  const children = [{ text: 'a BAD one' }, { text: 'the GOOD one' }]
+  const { ctx, tools } = pluginCtx(respond, children, [])
+  apply(ctx, { ...ROUTE, repetitions: 1, criteria: ONE_CRITERION, concurrency: 1, rollout: { maxConcurrent: 1 } })
+  const exec = { signal: new AbortController().signal, agent: {} }
+  await tools.get('verify_rollout').execute({ task: 't', n: 2 }, exec)
+  assert.ok(prompts.every(p => p.includes('No reference solution') || p.includes('no reference solution')))
+  assert.ok(prompts.every(p => p.includes('Task Success')))
+})
+
 test('an aborted judge call is retried once when the caller did not abort', async () => {
   let calls = 0
   const engine = new VerifierEngine(mockCtx(() => {
@@ -385,7 +433,7 @@ test('verify_rollout presentationMeta is a pure JSON scoreboard', async () => {
   assert.equal(meta.attempts[1].preview, 'the GOOD one')
   assert.ok(meta.attempts.every(a => typeof a.rollout === 'number' && typeof a.ok === 'boolean'))
   assert.equal(meta.judge.granularity, 20)
-  assert.deepEqual(meta.judge.criteria, ['only'])
+  assert.deepEqual(meta.judge.criteria, ['Task Success'])
   assert.ok(Array.isArray(meta.judge.pairs) && meta.judge.pairs.length >= 1)
   assert.ok(meta.judge.pairs.every(pair => typeof pair.a === 'number' && typeof pair.reward_a === 'number'))
   // Lossless JSON round-trip (the registry persists this on tool/result).
